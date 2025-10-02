@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -17,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +63,13 @@ data class Tetromino(
     fun move(dx: Int, dy: Int) = copy(cells = cells.map { it.copy(x = it.x + dx, y = it.y + dy) })
 }
 
+// Состояние для анимаций
+data class AnimationState(
+    val isClearing: Boolean = false,
+    val clearingLines: Set<Int> = emptySet(),
+    val flashProgress: Float = 0f
+)
+
 class TetrisGame {
     companion object {
         const val WIDTH = 10
@@ -69,28 +78,21 @@ class TetrisGame {
 
     private val grid = Array(WIDTH) { Array<Color?>(HEIGHT) { null } }
     private var currentPiece: Tetromino? = null
-    private var _score = 0
-    private var _level = 1
-    private var _linesCleared = 0
-    private var _isGameOver = false
+    private var _score by mutableStateOf(0)
+    private var _level by mutableStateOf(1)
+    private var _linesCleared by mutableStateOf(0)
+    private var _isGameOver by mutableStateOf(false)
     private var lastDropTime = System.currentTimeMillis()
 
+    // Состояние анимаций
+    private var _animationState by mutableStateOf(AnimationState())
+
     // Observable state для Compose
-    var score: Int
-        get() = _score
-        private set(value) { _score = value }
-
-    var level: Int
-        get() = _level
-        private set(value) { _level = value }
-
-    var linesCleared: Int
-        get() = _linesCleared
-        private set(value) { _linesCleared = value }
-
-    var isGameOver: Boolean
-        get() = _isGameOver
-        private set(value) { _isGameOver = value }
+    val score: Int get() = _score
+    val level: Int get() = _level
+    val linesCleared: Int get() = _linesCleared
+    val isGameOver: Boolean get() = _isGameOver
+    val animationState: AnimationState get() = _animationState
 
     init {
         spawnNewPiece()
@@ -123,12 +125,12 @@ class TetrisGame {
     fun spawnNewPiece() {
         currentPiece = createTetromino(enumValues<TetrominoType>().random())
         if (currentPiece!!.cells.any { it.x !in 0 until WIDTH || it.y !in 0 until HEIGHT || grid[it.x][it.y] != null }) {
-            isGameOver = true
+            _isGameOver = true
         }
     }
 
     fun movePiece(dx: Int, dy: Int): Boolean {
-        if (isGameOver || currentPiece == null) return false
+        if (isGameOver || currentPiece == null || _animationState.isClearing) return false
         val moved = currentPiece!!.move(dx, dy)
         return if (isValidPosition(moved)) {
             currentPiece = moved
@@ -137,7 +139,7 @@ class TetrisGame {
     }
 
     fun rotatePiece(): Boolean {
-        if (isGameOver || currentPiece == null) return false
+        if (isGameOver || currentPiece == null || _animationState.isClearing) return false
         val rotated = currentPiece!!.rotate()
         return if (isValidPosition(rotated)) {
             currentPiece = rotated
@@ -165,7 +167,7 @@ class TetrisGame {
     }
 
     fun dropPiece(): Boolean {
-        if (isGameOver || currentPiece == null) return false
+        if (isGameOver || currentPiece == null || _animationState.isClearing) return false
         return if (!movePiece(0, 1)) {
             lockPiece()
             clearLines()
@@ -185,46 +187,81 @@ class TetrisGame {
     }
 
     private fun clearLines() {
-        var linesClearedCount = 0
-        var y = HEIGHT - 1
-        while (y >= 0) {
+        val linesToClear = mutableSetOf<Int>()
+
+        // Находим линии для очистки
+        for (y in HEIGHT - 1 downTo 0) {
             if ((0 until WIDTH).all { x -> grid[x][y] != null }) {
-                // Удаляем линию
+                linesToClear.add(y)
+            }
+        }
+
+        if (linesToClear.isNotEmpty()) {
+            // Запускаем анимацию очистки
+            startClearAnimation(linesToClear)
+        }
+    }
+
+    private fun startClearAnimation(linesToClear: Set<Int>) {
+        _animationState = AnimationState(
+            isClearing = true,
+            clearingLines = linesToClear,
+            flashProgress = 0f
+        )
+    }
+
+    // Функция для обновления прогресса анимации
+    fun updateAnimationProgress(progress: Float) {
+        _animationState = _animationState.copy(flashProgress = progress)
+    }
+
+    // Функция для завершения анимации и фактического очищения линий
+    fun completeLineClear() {
+        val linesToClear = _animationState.clearingLines
+
+        // Фактически очищаем линии - ИСПРАВЛЕННАЯ ЛОГИКА
+        val linesToClearSorted = linesToClear.sortedDescending()
+        var linesClearedCount = 0
+
+        for (lineToRemove in linesToClearSorted) {
+            // Удаляем линию
+            for (x in 0 until WIDTH) {
+                grid[x][lineToRemove] = null
+            }
+            linesClearedCount++
+        }
+
+        // Теперь сдвигаем все блоки вниз
+        for (lineToRemove in linesToClearSorted) {
+            for (y in lineToRemove downTo 1) {
                 for (x in 0 until WIDTH) {
-                    grid[x][y] = null
+                    grid[x][y] = grid[x][y - 1]
                 }
-                // Сдвигаем все линии выше вниз
-                for (yy in y downTo 1) {
-                    for (x in 0 until WIDTH) {
-                        grid[x][yy] = grid[x][yy - 1]
-                    }
-                }
-                // Очищаем самую верхнюю линию
-                for (x in 0 until WIDTH) {
-                    grid[x][0] = null
-                }
-                linesClearedCount++
-                // Не уменьшаем y, так как нужно проверить ту же позицию снова после сдвига
-            } else {
-                y--
+            }
+            // Очищаем самую верхнюю линию
+            for (x in 0 until WIDTH) {
+                grid[x][0] = null
             }
         }
 
         if (linesClearedCount > 0) {
-            linesCleared += linesClearedCount
-            score += when (linesClearedCount) {
+            _linesCleared += linesClearedCount
+            _score += when (linesClearedCount) {
                 1 -> 100 * level
                 2 -> 300 * level
                 3 -> 500 * level
                 4 -> 800 * level
                 else -> 0
             }
-            level = linesCleared / 10 + 1
+            _level = _linesCleared / 10 + 1
         }
+
+        // Сбрасываем состояние анимации
+        _animationState = AnimationState()
     }
 
     fun hardDrop() {
-        if (isGameOver || currentPiece == null) return
+        if (isGameOver || currentPiece == null || _animationState.isClearing) return
         while (movePiece(0, 1)) { /* continue */ }
         lockPiece()
         clearLines()
@@ -232,6 +269,7 @@ class TetrisGame {
     }
 
     fun shouldAutoDrop(): Boolean {
+        if (_animationState.isClearing) return false
         val currentTime = System.currentTimeMillis()
         val dropInterval = maxOf(1000L - (level - 1) * 100, 100L)
         return if (currentTime - lastDropTime > dropInterval) {
@@ -247,11 +285,12 @@ class TetrisGame {
             }
         }
         currentPiece = null
-        score = 0
-        level = 1
-        linesCleared = 0
-        isGameOver = false
+        _score = 0
+        _level = 1
+        _linesCleared = 0
+        _isGameOver = false
         lastDropTime = System.currentTimeMillis()
+        _animationState = AnimationState()
         spawnNewPiece()
     }
 
@@ -259,10 +298,12 @@ class TetrisGame {
     fun getGridState(): List<List<Color?>> {
         val displayGrid = List(WIDTH) { x -> List(HEIGHT) { y -> grid[x][y] } }
 
-        // Добавляем текущую фигуру
-        currentPiece?.cells?.forEach { cell ->
-            if (cell.x in 0 until WIDTH && cell.y in 0 until HEIGHT) {
-                (displayGrid[cell.x] as MutableList<Color?>)[cell.y] = cell.color
+        // Добавляем текущую фигуру (только если нет анимации очистки)
+        if (!_animationState.isClearing) {
+            currentPiece?.cells?.forEach { cell ->
+                if (cell.x in 0 until WIDTH && cell.y in 0 until HEIGHT) {
+                    (displayGrid[cell.x] as MutableList<Color?>)[cell.y] = cell.color
+                }
             }
         }
 
@@ -357,10 +398,43 @@ fun GameScreen(
         refreshCounter++
     }
 
+    // Анимация очистки линий - ИСПРАВЛЕННАЯ ЛОГИКА
+    var animationFinished by remember { mutableStateOf(false) }
+
+    val animationProgress by animateFloatAsState(
+        targetValue = if (game.animationState.isClearing) 1f else 0f,
+        animationSpec = repeatable(
+            iterations = 3, // 3 мигания
+            animation = tween(durationMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        finishedListener = { progress ->
+            if (progress == 1f && game.animationState.isClearing && !animationFinished) {
+                animationFinished = true
+                game.completeLineClear()
+                refreshUI()
+            }
+        }
+    )
+
+    // Сбрасываем флаг завершения анимации когда начинается новая анимация
+    LaunchedEffect(game.animationState.isClearing) {
+        if (game.animationState.isClearing) {
+            animationFinished = false
+        }
+    }
+
+    // Обновляем прогресс анимации
+    LaunchedEffect(animationProgress) {
+        if (game.animationState.isClearing) {
+            game.updateAnimationProgress(animationProgress)
+        }
+    }
+
     // Игровой цикл
     LaunchedEffect(key1 = isPaused) {
         while (true) {
-            if (!game.isGameOver && !isPaused) {
+            if (!game.isGameOver && !isPaused && !game.animationState.isClearing) {
                 if (game.shouldAutoDrop()) {
                     game.dropPiece()
                     onUpdateHighScore(game.score)
@@ -429,7 +503,7 @@ fun GameScreen(
                 }
 
                 // Кнопки управления
-                if (!isPaused && !game.isGameOver) {
+                if (!isPaused && !game.isGameOver && !game.animationState.isClearing) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -501,7 +575,7 @@ fun GameScreen(
                         detectTapGestures(
                             onTap = {
                                 // Тап для поворота
-                                if (!game.isGameOver && !isPaused) {
+                                if (!game.isGameOver && !isPaused && !game.animationState.isClearing) {
                                     game.rotatePiece()
                                     refreshUI()
                                 }
@@ -563,21 +637,13 @@ fun GameScreen(
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(
-            onClick = onBackToMenu,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        ) {
-            Text("BACK TO MENU")
-        }
     }
 }
 
 @Composable
 fun GameGrid(game: TetrisGame, refreshCounter: Int) {
     val gridState = remember(refreshCounter) { game.getGridState() }
+    val animationState = game.animationState
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(TetrisGame.WIDTH),
@@ -591,16 +657,30 @@ fun GameGrid(game: TetrisGame, refreshCounter: Int) {
             val x = index % TetrisGame.WIDTH
             val y = index / TetrisGame.WIDTH
 
+            val isInClearingLine = animationState.clearingLines.contains(y)
             val cellColor = if (x in gridState.indices && y in gridState[x].indices) {
                 gridState[x][y] ?: Color(0xFF222222)
             } else {
                 Color(0xFF222222)
             }
 
+            // Анимация мигания для очищаемых линий - ИСПРАВЛЕННАЯ ЛОГИКА
+            val displayColor = if (isInClearingLine) {
+                // Чередуем между белым и оригинальным цветом
+                val flashPhase = (animationState.flashProgress * 6).toInt() % 2 // 0 или 1
+                if (flashPhase == 0) {
+                    Color.White
+                } else {
+                    cellColor
+                }
+            } else {
+                cellColor
+            }
+
             Box(
                 modifier = Modifier
                     .aspectRatio(1f)
-                    .background(cellColor)
+                    .background(displayColor)
                     .border(1.dp, Color(0xFF444444))
             )
         }
