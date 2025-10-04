@@ -27,7 +27,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.abs
-
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -389,22 +391,22 @@ fun GameScreen(
 ) {
     val game = remember { TetrisGame() }
     var isPaused by remember { mutableStateOf(false) }
-
-    // Состояние для принудительного обновления UI
     var refreshCounter by remember { mutableStateOf(0) }
 
-    // Функция для обновления UI
+    // Переменные для жестов
+    var lastDragDistance by remember { mutableStateOf(0f) }
+    val dragThreshold = 50f // минимальное расстояние для регистрации драга
+
     fun refreshUI() {
         refreshCounter++
     }
 
-    // Анимация очистки линий - ИСПРАВЛЕННАЯ ЛОГИКА
     var animationFinished by remember { mutableStateOf(false) }
 
     val animationProgress by animateFloatAsState(
         targetValue = if (game.animationState.isClearing) 1f else 0f,
         animationSpec = repeatable(
-            iterations = 3, // 3 мигания
+            iterations = 3,
             animation = tween(durationMillis = 200, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
@@ -417,14 +419,12 @@ fun GameScreen(
         }
     )
 
-    // Сбрасываем флаг завершения анимации когда начинается новая анимация
     LaunchedEffect(game.animationState.isClearing) {
         if (game.animationState.isClearing) {
             animationFinished = false
         }
     }
 
-    // Обновляем прогресс анимации
     LaunchedEffect(animationProgress) {
         if (game.animationState.isClearing) {
             game.updateAnimationProgress(animationProgress)
@@ -441,7 +441,7 @@ fun GameScreen(
                     refreshUI()
                 }
             }
-            delay(16) // ~60 FPS
+            delay(16)
         }
     }
 
@@ -470,7 +470,6 @@ fun GameScreen(
                     .fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Кнопка назад в главное меню
                 Button(
                     onClick = onBackToMenu,
                     modifier = Modifier.fillMaxWidth()
@@ -502,69 +501,28 @@ fun GameScreen(
                     Text("RESTART")
                 }
 
-                // Кнопки управления
-                if (!isPaused && !game.isGameOver && !game.animationState.isClearing) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Button(
-                            onClick = {
-                                game.movePiece(-1, 0)
-                                refreshUI()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("←")
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Button(
-                                onClick = {
-                                    game.rotatePiece()
-                                    refreshUI()
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("↻")
-                            }
-                            Button(
-                                onClick = {
-                                    game.movePiece(1, 0)
-                                    refreshUI()
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("→")
-                            }
-                        }
-                        Button(
-                            onClick = {
-                                game.dropPiece()
-                                refreshUI()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("↓")
-                        }
-                        Button(
-                            onClick = {
-                                game.hardDrop()
-                                refreshUI()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("HARD DROP")
-                        }
-                    }
+                // Инструкции по жестам
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF222222))
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        "Управление жестами:",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Text("• Тап - поворот", color = Color.White, fontSize = 12.sp)
+                    Text("• Двойной тап - хард дроп", color = Color.White, fontSize = 12.sp)
+                    Text("• Драг влево/вправо - движение", color = Color.White, fontSize = 12.sp)
                 }
             }
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // Игровое поле
+            // Игровое поле с жестами
             Box(
                 modifier = Modifier
                     .weight(0.6f)
@@ -574,16 +532,53 @@ fun GameScreen(
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
-                                // Тап для поворота
+                                // Одинарный тап - поворот
                                 if (!game.isGameOver && !isPaused && !game.animationState.isClearing) {
                                     game.rotatePiece()
+                                    refreshUI()
+                                }
+                            },
+                            onDoubleTap = {
+                                // Двойной тап - хард дроп
+                                if (!game.isGameOver && !isPaused && !game.animationState.isClearing) {
+                                    game.hardDrop()
+                                    refreshUI()
+                                }
+                            }
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = {
+                                lastDragDistance = 0f
+                            },
+                            onDrag = { change, dragAmount ->
+                                if (game.isGameOver || isPaused || game.animationState.isClearing) return@detectDragGestures
+
+                                lastDragDistance += dragAmount.x
+                                val verticalDrag = dragAmount.y
+
+                                // Горизонтальное перемещение
+                                if (abs(dragAmount.x) > abs(dragAmount.y)) {
+                                    if (lastDragDistance > dragThreshold) {
+                                        game.movePiece(1, 0)
+                                        lastDragDistance = 0f
+                                        refreshUI()
+                                    } else if (lastDragDistance < -dragThreshold) {
+                                        game.movePiece(-1, 0)
+                                        lastDragDistance = 0f
+                                        refreshUI()
+                                    }
+                                }
+                                // Вертикальное перемещение (ускоренное падение)
+                                else if (verticalDrag > dragThreshold) {
+                                    game.dropPiece()
                                     refreshUI()
                                 }
                             }
                         )
                     }
             ) {
-                // Используем ключ refreshCounter для принудительного обновления
                 GameGrid(game = game, refreshCounter = refreshCounter)
 
                 if (game.isGameOver) {
@@ -664,9 +659,9 @@ fun GameGrid(game: TetrisGame, refreshCounter: Int) {
                 Color(0xFF222222)
             }
 
-            // Анимация мигания для очищаемых линий - ИСПРАВЛЕННАЯ ЛОГИКА
+            // Анимация мигания для очистки линий
             val displayColor = if (isInClearingLine) {
-                // Чередуем между белым и оригинальным цветом
+                // Чередуем цвета
                 val flashPhase = (animationState.flashProgress * 6).toInt() % 2 // 0 или 1
                 if (flashPhase == 0) {
                     Color.White
