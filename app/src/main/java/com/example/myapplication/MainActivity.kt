@@ -40,7 +40,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Модели данных
 data class Cell(val x: Int, val y: Int, val color: Color)
 
 enum class TetrominoType { I, O, T, S, Z, J, L }
@@ -86,10 +85,9 @@ class TetrisGame {
     private var _isGameOver by mutableStateOf(false)
     private var lastDropTime = System.currentTimeMillis()
 
-    // Состояние анимаций
     private var _animationState by mutableStateOf(AnimationState())
 
-    // Observable state для Compose
+
     val score: Int get() = _score
     val level: Int get() = _level
     val linesCleared: Int get() = _linesCleared
@@ -147,7 +145,7 @@ class TetrisGame {
             currentPiece = rotated
             true
         } else {
-            // Попробуем сдвинуть фигуру для вращения (wall kick)
+
             val kicks = listOf(0, 1, -1, 2, -2)
             for (dx in kicks) {
                 val kicked = rotated.move(dx, 0)
@@ -191,7 +189,7 @@ class TetrisGame {
     private fun clearLines() {
         val linesToClear = mutableSetOf<Int>()
 
-        // Находим линии для очистки
+
         for (y in HEIGHT - 1 downTo 0) {
             if ((0 until WIDTH).all { x -> grid[x][y] != null }) {
                 linesToClear.add(y)
@@ -199,7 +197,7 @@ class TetrisGame {
         }
 
         if (linesToClear.isNotEmpty()) {
-            // Запускаем анимацию очистки
+
             startClearAnimation(linesToClear)
         }
     }
@@ -212,35 +210,30 @@ class TetrisGame {
         )
     }
 
-    // Функция для обновления прогресса анимации
+
     fun updateAnimationProgress(progress: Float) {
         _animationState = _animationState.copy(flashProgress = progress)
     }
 
-    // Функция для завершения анимации и фактического очищения линий
     fun completeLineClear() {
         val linesToClear = _animationState.clearingLines
 
-        // Фактически очищаем линии - ИСПРАВЛЕННАЯ ЛОГИКА
         val linesToClearSorted = linesToClear.sortedDescending()
         var linesClearedCount = 0
 
         for (lineToRemove in linesToClearSorted) {
-            // Удаляем линию
             for (x in 0 until WIDTH) {
                 grid[x][lineToRemove] = null
             }
             linesClearedCount++
         }
 
-        // Теперь сдвигаем все блоки вниз
         for (lineToRemove in linesToClearSorted) {
             for (y in lineToRemove downTo 1) {
                 for (x in 0 until WIDTH) {
                     grid[x][y] = grid[x][y - 1]
                 }
             }
-            // Очищаем самую верхнюю линию
             for (x in 0 until WIDTH) {
                 grid[x][0] = null
             }
@@ -258,7 +251,7 @@ class TetrisGame {
             _level = _linesCleared / 10 + 1
         }
 
-        // Сбрасываем состояние анимации
+
         _animationState = AnimationState()
     }
 
